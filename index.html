@@ -48,7 +48,7 @@
   .bubble.me{background:rgba(245,197,24,0.28);border:1px solid rgba(245,197,24,0.5);border-bottom-right-radius:3px;}
   .bubble.ai{background:rgba(245,197,24,0.09);border:1px solid rgba(245,197,24,0.25);border-bottom-left-radius:3px;}
   .bubble .metaLine{font-size:10.5px;color:var(--muted);margin-bottom:6px;}
-  .bubble .actions{display:flex;gap:8px;margin-top:10px;}
+  .bubble .actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
   .bubble .actions button{
     padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:#232325;color:var(--muted);
     cursor:pointer;font-family:var(--mono);font-size:11.5px;
@@ -125,6 +125,7 @@ const IDENTITIES = {
 // Ajusta estas URLs a las de tu proyecto de Supabase.
 const DRAFT_FN_URL = 'https://dtdcetyultwhjtwtzzcq.supabase.co/functions/v1/tareas-draft';
 const SEND_FN_URL  = 'https://dtdcetyultwhjtwtzzcq.supabase.co/functions/v1/tareas-send';
+const SEARCH_FN_URL = 'https://dtdcetyultwhjtwtzzcq.supabase.co/functions/v1/tareas-search-contacts';
 
 let currentIdentity = null;
 let pendingDraft = null; // { to, subject, body }
@@ -209,28 +210,47 @@ async function handleSendTask(){
     pendingDraft = { to: data.to, subject: data.subject, body: data.body };
 
     if(!data.to){
+      addTypingBubble();
+      let candidates = [];
+      if(data.recipientName){
+        try{
+          const searchRes = await fetch(SEARCH_FN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sender: currentIdentity, query: data.recipientName }),
+          });
+          const searchData = await searchRes.json();
+          if(searchData.ok) candidates = searchData.candidates || [];
+        }catch(_e){ /* si falla la búsqueda, seguimos con el campo manual */ }
+      }
+      removeTypingBubble();
+
       const bubble = addBubble('', 'ai', { meta: 'Falta el destinatario' + (data.recipientName ? ' de "' + data.recipientName + '"' : '') });
-      const p = document.createElement('div');
-      p.textContent = '¿A qué dirección lo envío?';
-      bubble.appendChild(p);
-      const input2 = document.createElement('input');
-      input2.type = 'text';
-      input2.placeholder = 'nombre@ejemplo.com';
-      bubble.appendChild(input2);
-      const actions = document.createElement('div');
-      actions.className = 'actions';
-      const okBtn = document.createElement('button');
-      okBtn.className = 'sendBtn';
-      okBtn.textContent = 'Continuar';
-      okBtn.onclick = ()=>{
-        const addr = input2.value.trim();
-        if(!addr.includes('@')){ input2.style.borderColor = '#e5544b'; return; }
-        pendingDraft.to = addr;
-        showConfirmationBubble();
-      };
-      actions.appendChild(okBtn);
-      bubble.appendChild(actions);
-      input2.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); okBtn.click(); } });
+
+      if(candidates.length > 0){
+        const p = document.createElement('div');
+        p.textContent = 'He encontrado estas direcciones en tu correo. ¿Cuál es?';
+        bubble.appendChild(p);
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        actions.style.flexWrap = 'wrap';
+        candidates.forEach(c=>{
+          const btn = document.createElement('button');
+          btn.textContent = (c.name ? c.name + ' — ' : '') + c.email;
+          btn.onclick = ()=>{ pendingDraft.to = c.email; showConfirmationBubble(); };
+          actions.appendChild(btn);
+        });
+        const otherBtn = document.createElement('button');
+        otherBtn.textContent = 'Otra dirección...';
+        otherBtn.onclick = ()=> showManualRecipientInput(bubble);
+        actions.appendChild(otherBtn);
+        bubble.appendChild(actions);
+      } else {
+        const p = document.createElement('div');
+        p.textContent = 'No he encontrado ninguna dirección para ese nombre en tu correo. ¿A qué dirección lo envío?';
+        bubble.appendChild(p);
+        showManualRecipientInput(bubble);
+      }
       return;
     }
 
@@ -239,6 +259,28 @@ async function handleSendTask(){
     removeTypingBubble();
     addBubble('Error de conexión: ' + err.message, 'ai');
   }
+}
+
+function showManualRecipientInput(bubble){
+  const input2 = document.createElement('input');
+  input2.type = 'text';
+  input2.placeholder = 'nombre@ejemplo.com';
+  bubble.appendChild(input2);
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const okBtn = document.createElement('button');
+  okBtn.className = 'sendBtn';
+  okBtn.textContent = 'Continuar';
+  okBtn.onclick = ()=>{
+    const addr = input2.value.trim();
+    if(!addr.includes('@')){ input2.style.borderColor = '#e5544b'; return; }
+    pendingDraft.to = addr;
+    showConfirmationBubble();
+  };
+  actions.appendChild(okBtn);
+  bubble.appendChild(actions);
+  input2.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); okBtn.click(); } });
+  input2.focus();
 }
 
 function showConfirmationBubble(){
